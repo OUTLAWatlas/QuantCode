@@ -19,6 +19,14 @@ const App = () => {
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
+  
+  // Position Size Calculator state
+  const [accountSize, setAccountSize] = useState('');
+  const [entryPrice, setEntryPrice] = useState('');
+  const [stopLossPrice, setStopLossPrice] = useState('');
+  const [positionSizeLoading, setPositionSizeLoading] = useState(false);
+  const [positionSizeResult, setPositionSizeResult] = useState(null);
+  const [positionSizeError, setPositionSizeError] = useState(null);
 
   // API base URL - adjust this based on your Flask backend setup
   const API_BASE_URL = 'http://127.0.0.1:5000';
@@ -79,6 +87,75 @@ const App = () => {
   const handleKeyPress = (e) => {
     if (e.key === 'Enter') {
       handleAnalyze();
+    }
+  };
+
+  /**
+   * Handle position size calculation
+   * Makes API call to Flask backend for position sizing
+   */
+  const handleCalculatePositionSize = async () => {
+    // Validate inputs
+    if (!accountSize.trim() || !entryPrice.trim() || !stopLossPrice.trim()) {
+      setPositionSizeError('Please fill in all fields');
+      return;
+    }
+
+    const account = parseFloat(accountSize);
+    const entry = parseFloat(entryPrice);
+    const stopLoss = parseFloat(stopLossPrice);
+
+    if (isNaN(account) || isNaN(entry) || isNaN(stopLoss)) {
+      setPositionSizeError('Please enter valid numeric values');
+      return;
+    }
+
+    if (account <= 0 || entry <= 0 || stopLoss <= 0) {
+      setPositionSizeError('All values must be greater than 0');
+      return;
+    }
+
+    // Reset previous states
+    setPositionSizeLoading(true);
+    setPositionSizeError(null);
+    setPositionSizeResult(null);
+
+    try {
+      // Make API call to Flask backend for position size calculation
+      const response = await axios.get(
+        `${API_BASE_URL}/api/calculate_position_size`,
+        {
+          params: {
+            account: account,
+            risk: 1, // Hardcoded to 1% as requested
+            entry: entry,
+            sl: stopLoss
+          },
+          timeout: 10000, // 10 second timeout
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        }
+      );
+
+      // Update state with successful response
+      setPositionSizeResult(response.data);
+      
+    } catch (err) {
+      // Handle different types of errors
+      if (err.response) {
+        // API returned an error response
+        setPositionSizeError(err.response.data.error || 'Position size calculation failed');
+      } else if (err.request) {
+        // Network error
+        setPositionSizeError('Unable to connect to calculation server. Please check if the backend is running.');
+      } else {
+        // Other errors
+        setPositionSizeError('An unexpected error occurred during calculation');
+      }
+      console.error('Position size calculation error:', err);
+    } finally {
+      setPositionSizeLoading(false);
     }
   };
 
@@ -453,6 +530,88 @@ const App = () => {
             {loading ? 'Analyzing...' : 'Analyze'}
           </button>
         </div>
+      </div>
+
+      {/* Position Size Calculator */}
+      <div className="position-calculator">
+        <h2 className="calculator-title">Position Size Calculator</h2>
+        
+        <div className="calculator-inputs">
+          <div className="input-field">
+            <label className="input-label">Account Size (INR)</label>
+            <input
+              type="number"
+              className="calculator-input"
+              placeholder="Enter your account size"
+              value={accountSize}
+              onChange={(e) => setAccountSize(e.target.value)}
+            />
+          </div>
+          
+          <div className="input-field">
+            <label className="input-label">Entry Price</label>
+            <input
+              type="number"
+              step="0.01"
+              className="calculator-input"
+              placeholder="Enter entry price"
+              value={entryPrice}
+              onChange={(e) => setEntryPrice(e.target.value)}
+            />
+          </div>
+          
+          <div className="input-field">
+            <label className="input-label">Stop Loss Price</label>
+            <input
+              type="number"
+              step="0.01"
+              className="calculator-input"
+              placeholder="Enter stop loss price"
+              value={stopLossPrice}
+              onChange={(e) => setStopLossPrice(e.target.value)}
+            />
+          </div>
+        </div>
+        
+        <button
+          className="calculate-btn"
+          onClick={handleCalculatePositionSize}
+          disabled={positionSizeLoading || !accountSize.trim() || !entryPrice.trim() || !stopLossPrice.trim()}
+        >
+          {positionSizeLoading ? (
+            <>
+              <div className="loading-spinner"></div>
+              Calculating...
+            </>
+          ) : (
+            'Calculate Position Size'
+          )}
+        </button>
+        
+        {/* Position Size Error Display */}
+        {positionSizeError && (
+          <div className="position-error">
+            <strong>Error:</strong> {positionSizeError}
+          </div>
+        )}
+        
+        {/* Position Size Result Display */}
+        {positionSizeResult && !positionSizeLoading && (
+          <div className="position-result">
+            <div className="position-result-title">Recommended Position Size</div>
+            <div className="position-result-value">
+              {positionSizeResult.calculation?.max_shares || 0} shares/lots
+            </div>
+            <div className="position-result-details">
+              <div>Risk Amount: ₹{positionSizeResult.calculation?.risk_amount || 0}</div>
+              <div>Total Investment: ₹{positionSizeResult.recommendation?.total_investment || 0}</div>
+              <div>Risk per Share: ₹{positionSizeResult.calculation?.risk_per_share || 0}</div>
+              <div style={{ marginTop: '10px', fontStyle: 'italic' }}>
+                Using 1% risk rule - Max loss if stop loss hit: ₹{positionSizeResult.calculation?.risk_amount || 0}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Loading Indicator */}
