@@ -2,3 +2,11 @@ pandas>=1.5.0
 yfinance>=0.2.0
 numpy>=1.21.0
 flask>=2.0.0
+Flask-SQLAlchemy>=3.1.0
+SQLAlchemy>=2.0.0
+Flask-Migrate>=4.0.7
+pytest>=7.0.0
+# PostgreSQL driver for SQLAlchemy
+psycopg2-binary>=2.9.9
+# Optional: pandas-ta (advanced indicators). Some versions require Python >=3.12 and may not be on PyPI.
+# Install manually if needed: pip install pandas-ta  (or pin a version compatible with your Python)

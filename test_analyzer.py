@@ -5,7 +5,7 @@ QUANTCODE Test Suite
 Test and demonstration script for the Heiken Ashi trading analysis function.
 """
 
-from quantcode_analyzer import analyze_heiken_ashi
+from backend.quantcode_analyzer import analyze_heiken_ashi
 import warnings
 
 # Suppress pandas warnings for cleaner output

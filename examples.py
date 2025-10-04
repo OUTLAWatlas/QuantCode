@@ -6,7 +6,7 @@ Practical examples demonstrating how to use the analyze_heiken_ashi function
 in different trading scenarios and applications.
 """
 
-from quantcode_analyzer import analyze_heiken_ashi
+from backend.quantcode_analyzer import analyze_heiken_ashi
 import json
 import warnings
 

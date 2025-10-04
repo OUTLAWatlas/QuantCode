@@ -1,0 +1,115 @@
+/* Project Singularity — Holographic Glitch Theme */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Fira+Code:wght@400;600&display=swap');
+
+:root {
+  --sg-bg-start: #0D0D2B;
+  --sg-bg-end: #2C2C54;
+  --sg-electric: #00BFFF;
+  --sg-neon-green: #39FF14;
+  --sg-neon-red: #FF3131;
+  --sg-ghost: #F8F8FF;
+}
+
+html, body, #root { height: 100%; }
+body { background: linear-gradient(135deg, var(--sg-bg-start), var(--sg-bg-end)); color: var(--sg-ghost); }
+
+.title-orbitron { font-family: 'Orbitron', sans-serif !important; letter-spacing: 0.5px; }
+.mono { font-family: 'Fira Code', monospace !important; }
+.neon-title { text-shadow: 0 0 8px var(--sg-electric), 0 0 16px rgba(0,191,255,0.4); }
+
+.panel { border: 1px solid rgba(0,191,255,0.4); background: rgba(255,255,255,0.06); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: 0 8px 24px rgba(0,0,0,0.35); }
+.panel-frosted { border-radius: 12px; }
+.panel-header .MuiCardHeader-title { font-family: 'Orbitron', sans-serif; letter-spacing: 0.3px; }
+
+.btn-glow { border: 1px solid var(--sg-electric) !important; color: var(--sg-ghost) !important; background: transparent !important; box-shadow: 0 0 12px rgba(0,191,255,0.25) inset; }
+.btn-glow:hover { box-shadow: 0 0 18px rgba(0,191,255,0.55) inset; filter: hue-rotate(5deg); }
+
+.chip-signal { border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.08); }
+.chip-buy { color: var(--sg-neon-green) !important; text-shadow: 0 0 6px rgba(57,255,20,0.75); }
+.chip-sell { color: var(--sg-neon-red) !important; text-shadow: 0 0 6px rgba(255,49,49,0.75); }
+.chip-hold { color: var(--sg-electric) !important; text-shadow: 0 0 6px rgba(0,191,255,0.75); }
+
+.neon-green { color: var(--sg-neon-green) !important; text-shadow: 0 0 8px rgba(57,255,20,0.8); }
+.neon-red { color: var(--sg-neon-red) !important; text-shadow: 0 0 8px rgba(255,49,49,0.8); }
+
+/* Glitch-in animation */
+@keyframes glitchIn { 0% { clip-path: inset(0 0 100% 0); filter: hue-rotate(45deg) blur(2px); opacity: 0; } 60% { clip-path: inset(0 0 0 0); opacity: 0.6; } 100% { filter: none; opacity: 1; } }
+.glitch-in { animation: glitchIn 600ms ease-out; }
+
+/* Hexagonal pulse */
+.hex-pulse, .hex-pulse-once { position: relative; }
+.hex-pulse::after, .hex-pulse-once::after { content: ''; position: absolute; inset: -6px; border: 2px solid var(--sg-electric); border-radius: 12px; box-shadow: 0 0 12px rgba(0,191,255,0.6), inset 0 0 12px rgba(0,191,255,0.3); filter: drop-shadow(0 0 2px var(--sg-electric)); }
+@keyframes pulseOnce { 0% { transform: scale(0.98); opacity: 0.4; } 50% { transform: scale(1.01); opacity: 1; } 100% { transform: scale(1); opacity: 0.7; } }
+.hex-pulse-once::after { animation: pulseOnce 900ms ease-out 1; }
+
+/* Background flowing grid */
+.app-bg::before { content: ''; position: fixed; inset: 0; background-image: linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px); background-size: 40px 40px; animation: flowGrid 12s linear infinite; pointer-events: none; }
+@keyframes flowGrid { 0% { transform: translateY(0); } 100% { transform: translateY(-40px); } }
+
+.chart-container { width: 100%; height: 360px; }
+.list-item-glow { border-radius: 8px; }
+.list-item-glow.Mui-selected { border: 1px solid rgba(0,191,255,0.4); background: rgba(0,191,255,0.08); box-shadow: 0 0 12px rgba(0,191,255,0.25) inset; }
+
+.signal-banner { display: flex; align-items: center; gap: 8px; margin: 8px 0 16px; }
+.mini-panel { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; }
+
+/* Breakdown grid & animations */
+.breakdown-section { margin-top: 12px; }
+/* Default two-column layout used in previous panel version */
+.breakdown-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 900px) { .breakdown-grid { grid-template-columns: 1fr; } }
+@keyframes fadeInUp { 0% { transform: translateY(6px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
+.fade-in-up { animation: fadeInUp 450ms ease-out both; }
+
+/* Variant grid for AnalysisView rows as 3 columns: name | signal | score */
+.breakdown-grid.breakdown-3cols { grid-template-columns: 1fr auto auto; gap: 10px 16px; }
+.breakdown-item { display: contents; }
+.breakdown-name { color: #b0b8c1; }
+.breakdown-signal { justify-self: start; }
+.breakdown-score { justify-self: end; }
+
+/* Shimmer skeleton */
+.shimmer {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0) 100%);
+  animation: shimmerMove 1.4s infinite;
+}
+@keyframes shimmerMove { 100% { transform: translateX(100%); } }
+
+/* Subtle data streams */
+@keyframes drift { 0% { transform: translateX(-10%); opacity: 0.15; } 50% { opacity: 0.3; } 100% { transform: translateX(10%); opacity: 0.15; } }
+.data-streams { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+.data-streams .stream { position: absolute; width: 1px; height: 140vh; background: linear-gradient(to bottom, transparent, rgba(0,191,255,0.25), transparent); animation: drift 8s ease-in-out infinite; }
+.data-streams .stream:nth-child(1) { left: 10%; animation-duration: 7s; }
+.data-streams .stream:nth-child(2) { left: 30%; animation-duration: 9s; }
+.data-streams .stream:nth-child(3) { left: 55%; animation-duration: 8.5s; }
+.data-streams .stream:nth-child(4) { left: 80%; animation-duration: 7.5s; }
+
+/* Focus Mode layout tweaks */
+.main-grid {
+  /* existing grid is wrapped by MUI Grid; we still transition the width behavior */
+  transition: grid-template-columns 0.4s ease-in-out, width 0.4s ease-in-out, opacity 0.25s ease-in-out;
+}
+
+.main-grid.focus-mode .dashboard-panel,
+.main-grid.focus-mode .risk-calculator-panel {
+  opacity: 0;
+  width: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  pointer-events: none;
+}
+
+.main-grid.focus-mode .chart-view-panel {
+  /* Let the central chart span full width visually */
+  grid-column: 1 / -1;
+}

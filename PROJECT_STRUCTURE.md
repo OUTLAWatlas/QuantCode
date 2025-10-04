@@ -5,12 +5,13 @@
 ```
 QuantCode/
 ├── 📁 Backend (Flask API)
-│   ├── 📄 quantcode_analyzer.py     # Core analysis class with multi-indicator support
-│   ├── 📄 app.py                    # Flask API server with comprehensive endpoints
-│   ├── 📄 requirements.txt          # Python dependencies (pandas, yfinance, flask, numpy)
-│   ├── 📄 test_analyzer.py          # Backend testing suite
-│   ├── 📄 examples.py               # Usage examples and patterns
-│   └── 📁 .venv/                    # Python virtual environment
+│   ├── � backend/
+│   │   └── �📄 quantcode_analyzer.py     # Core analysis class with multi-indicator support
+│   ├── 📄 app.py                        # Flask API server with comprehensive endpoints
+│   ├── 📄 requirements.txt              # Python dependencies (pandas, yfinance, flask, numpy)
+│   ├── 📄 test_analyzer.py              # Backend testing suite
+│   ├── 📄 examples.py                   # Usage examples and patterns
+│   └── 📁 .venv/                        # Python virtual environment
 │
 ├── 📁 Frontend (React Application)
 │   ├── 📁 src/

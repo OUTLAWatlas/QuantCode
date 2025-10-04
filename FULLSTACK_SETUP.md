@@ -5,10 +5,11 @@
 ```
 QuantCode/
 ├── Backend (Flask API)
-│   ├── quantcode_analyzer.py     # Core analysis class
-│   ├── app.py                    # Flask API server
-│   ├── requirements.txt          # Python dependencies
-│   └── .venv/                    # Python virtual environment
+│   ├── backend/
+│   │   └── quantcode_analyzer.py     # Core analysis class
+│   ├── app.py                        # Flask API server
+│   ├── requirements.txt              # Python dependencies
+│   └── .venv/                        # Python virtual environment
 │
 ├── Frontend (React App)
 │   ├── src/

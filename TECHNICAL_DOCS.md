@@ -71,7 +71,7 @@ pip install pandas yfinance
 
 ### Basic Usage
 ```python
-from quantcode_analyzer import analyze_heiken_ashi
+from backend.quantcode_analyzer import analyze_heiken_ashi
 
 result = analyze_heiken_ashi("AAPL")
 print(f"Signal: {result['signal']}")
@@ -101,12 +101,13 @@ except Exception as e:
 
 ```
 QuantCode/
-├── quantcode_analyzer.py    # Core analysis function
-├── test_analyzer.py         # Comprehensive test suite
-├── examples.py              # Usage examples and patterns
-├── requirements.txt         # Python dependencies
-├── README.md               # Project documentation
-└── LICENSE                 # License information
+├── backend/
+│   └── quantcode_analyzer.py    # Core analysis class and helpers
+├── test_analyzer.py             # Comprehensive test suite
+├── examples.py                  # Usage examples and patterns
+├── requirements.txt             # Python dependencies
+├── README.md                    # Project documentation
+└── LICENSE                      # License information
 ```
 
 ## Market Coverage

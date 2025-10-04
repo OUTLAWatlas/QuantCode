@@ -30,7 +30,7 @@ The `QuantCodeAnalyzer` class has been successfully refactored to be Flask API-r
 
 ### Basic Usage
 ```python
-from quantcode_analyzer import QuantCodeAnalyzer
+from backend.quantcode_analyzer import QuantCodeAnalyzer
 
 # Initialize analyzer
 analyzer = QuantCodeAnalyzer("AAPL")

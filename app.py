@@ -10,9 +10,15 @@ Date: October 2025
 """
 
 from flask import Flask, jsonify, request
-from quantcode_analyzer import QuantCodeAnalyzer
+from backend.quantcode_analyzer import QuantCodeAnalyzer
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+import yfinance as yf
+import pandas as pd
+from typing import Any, Dict, Tuple
+import os
+from models import db, Ticker, AnalysisResult
+from flask_migrate import Migrate
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +26,75 @@ logger = logging.getLogger(__name__)
 
 # Initialize Flask app
 app = Flask(__name__)
+
+# --------------------
+# Database configuration
+# --------------------
+default_sqlite_uri = 'sqlite:///quantcode.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', default_sqlite_uri)
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Initialize database with app
+db.init_app(app)
+Migrate(app, db)
+
+# Auto-initialize SQLite schema for local development when using the fallback DB
+try:
+    uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    if uri.startswith('sqlite'):
+        with app.app_context():
+            from sqlalchemy import inspect
+            insp = inspect(db.engine)
+            needed_tables = ['tickers', 'analysis_results', 'paper_trades']
+            missing = [t for t in needed_tables if not insp.has_table(t)]
+            if missing:
+                db.create_all()
+                logger.info(f"Initialized SQLite DB with tables: {', '.join(needed_tables)}")
+except Exception as e:
+    logger.warning(f"SQLite bootstrap failed: {e}")
+
+# -----------------------
+# Simple in-memory caches
+# -----------------------
+# Note: Suitable for a single-process dev server. For production, prefer Redis/memcached.
+
+AnalyzeCache: Dict[Tuple[str, int], Dict[str, Any]] = {}
+AnalyzeCacheMeta: Dict[Tuple[str, int], float] = {}
+AnalyzeCacheTTL = 180  # seconds
+AnalyzeCacheMaxKeys = 200
+
+HistoryCache: Dict[Tuple[str, int], Dict[str, Any]] = {}
+HistoryCacheMeta: Dict[Tuple[str, int], float] = {}
+HistoryCacheTTL = 600  # seconds
+HistoryCacheMaxKeys = 300
+
+def _cache_get(cache: Dict, meta: Dict, key: Tuple, ttl: int):
+    now = datetime.now().timestamp()
+    ts = meta.get(key)
+    if ts is None:
+        return None
+    if now - ts > ttl:
+        # expired
+        cache.pop(key, None)
+        meta.pop(key, None)
+        return None
+    return cache.get(key)
+
+def _cache_set(cache: Dict, meta: Dict, key: Tuple, value: Any, max_keys: int):
+    # Evict oldest if exceeding max
+    if len(cache) >= max_keys:
+        # find oldest by timestamp
+        oldest_key = None
+        oldest_ts = float('inf')
+        for k, ts in meta.items():
+            if ts < oldest_ts:
+                oldest_ts = ts
+                oldest_key = k
+        if oldest_key is not None:
+            cache.pop(oldest_key, None)
+            meta.pop(oldest_key, None)
+    cache[key] = value
+    meta[key] = datetime.now().timestamp()
 
 
 def calculate_position_size(account_value, risk_percent, stop_loss_price, entry_price):
@@ -116,14 +191,78 @@ def home():
             "/analyze/<ticker>/bollinger": "GET - Bollinger Bands analysis only",
             "/analyze/<ticker>/macd": "GET - MACD analysis only",
             "/analyze/<ticker>/rsi": "GET - RSI analysis only",
+            "/api/tickers": "GET - List watched tickers | POST - Replace watched tickers",
+            "/api/history/<ticker>": "GET - Historical close series for charts (time,value)",
             "/api/calculate_position_size": "GET - Calculate position size for risk management",
             "/health": "GET - API health check"
         },
         "examples": {
             "analysis": "/analyze/AAPL",
-            "position_size": "/api/calculate_position_size?account=10000&risk=1&entry=100&sl=95"
+            "position_size": "/api/calculate_position_size?account=10000&risk=1&entry=100&sl=95",
+            "history": "/api/history/AAPL?days=200"
         }
     })
+
+@app.route('/api/tickers', methods=['GET'])
+def get_watched_tickers():
+    """Return list of watched ticker symbols from the database.
+
+    Response: ["AAPL", "GOOG", ...]
+    """
+    try:
+        # Prefer Flask-SQLAlchemy style query if available
+        rows = Ticker.query.all() if hasattr(Ticker, 'query') else db.session.query(Ticker).all()
+        symbols = []
+        for r in rows:
+            sym = getattr(r, 'symbol', None) or getattr(r, 'ticker', None)
+            if sym is None:
+                # Fallback to string representation
+                sym = str(r)
+            symbols.append(str(sym))
+        return jsonify(symbols)
+    except Exception as e:
+        logger.error(f"/api/tickers GET failed: {e}")
+        return jsonify({ 'error': 'Failed to fetch tickers', 'details': str(e) }), 500
+
+@app.route('/api/tickers', methods=['POST'])
+def replace_watched_tickers():
+    """Replace all watched tickers with the provided list.
+
+    Request JSON: { "tickers": ["AAPL", "GOOG"] }
+    Response JSON: { "status": "success", "count": 2 }
+    """
+    try:
+        payload = request.get_json(silent=True) or {}
+        tickers = payload.get('tickers')
+        if not isinstance(tickers, list):
+            return jsonify({ 'error': "Body must include 'tickers' as a list" }), 400
+        # Normalize and filter
+        new_syms = [str(s).strip().upper() for s in tickers if isinstance(s, (str, bytes)) and str(s).strip()]
+
+        # Determine model attribute to set
+        field_name = 'symbol' if hasattr(Ticker, 'symbol') else ('ticker' if hasattr(Ticker, 'ticker') else None)
+        if field_name is None:
+            return jsonify({ 'error': 'Ticker model missing symbol/ticker attribute' }), 500
+
+        # Replace all entries atomically
+        try:
+            # Delete all existing entries
+            if hasattr(Ticker, 'query'):
+                Ticker.query.delete()
+            else:
+                db.session.query(Ticker).delete()
+            # Insert new
+            for sym in new_syms:
+                db.session.add(Ticker(**{field_name: sym}))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+
+        return jsonify({ 'status': 'success', 'count': len(new_syms) })
+    except Exception as e:
+        logger.error(f"/api/tickers POST failed: {e}")
+        return jsonify({ 'error': 'Failed to replace tickers', 'details': str(e) }), 500
 
 @app.route('/health')
 def health_check():
@@ -143,14 +282,14 @@ def analyze_ticker(ticker):
         ticker (str): Stock ticker symbol
         
     Query Parameters:
-        days (int): Number of days of historical data (default: 100)
+        days (int): Number of days of historical data (default: 200)
         
     Returns:
         JSON response with complete analysis
     """
     try:
         # Get optional parameters
-        days = request.args.get('days', 100, type=int)
+        days = request.args.get('days', 200, type=int)
         
         # Validate days parameter
         if days < 20 or days > 365:
@@ -159,9 +298,45 @@ def analyze_ticker(ticker):
                 "ticker": ticker
             }), 400
         
+        # Cache key and nocache override
+        key = (ticker.upper(), int(days))
+        nocache = request.args.get('nocache', '0') in ('1', 'true', 'True')
+
+        if not nocache:
+            cached = _cache_get(AnalyzeCache, AnalyzeCacheMeta, key, AnalyzeCacheTTL)
+            if cached is not None:
+                logger.info(f"Analyze cache hit for {ticker}:{days}")
+                return jsonify(cached)
+
         # Initialize analyzer and get results
         analyzer = QuantCodeAnalyzer(ticker.upper(), days=days)
         result = analyzer.get_final_signal()
+
+        # Persist analysis result if successful (no error key)
+        try:
+            if not result.get('error'):
+                # Extract primary trend text
+                pt = result.get('primary_trend')
+                primary_trend_text = pt.get('trend') if isinstance(pt, dict) else (pt or None)
+                ar = AnalysisResult(
+                    ticker_symbol=ticker.upper(),
+                    final_signal=result.get('final_signal'),
+                    total_score=int(result.get('total_score', 0)),
+                    primary_trend=primary_trend_text,
+                    breakdown=result.get('analyses', {})
+                )
+                db.session.add(ar)
+                db.session.commit()
+        except Exception as e:
+            # Do not fail the API for persistence errors; just log and continue
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            logger.error(f"Failed to persist analysis result for {ticker}: {e}")
+
+        # Store in cache
+        _cache_set(AnalyzeCache, AnalyzeCacheMeta, key, result, AnalyzeCacheMaxKeys)
         
         # Log the analysis
         logger.info(f"Analysis completed for {ticker}: {result['final_signal']}")
@@ -189,7 +364,7 @@ def analyze_ticker(ticker):
 def analyze_heiken_ashi_only(ticker):
     """Heiken Ashi analysis only endpoint."""
     try:
-        days = request.args.get('days', 100, type=int)
+        days = request.args.get('days', 200, type=int)
         analyzer = QuantCodeAnalyzer(ticker.upper(), days=days)
         result = analyzer.analyze_heiken_ashi()
         
@@ -211,7 +386,7 @@ def analyze_heiken_ashi_only(ticker):
 def analyze_bollinger_only(ticker):
     """Bollinger Bands analysis only endpoint."""
     try:
-        days = request.args.get('days', 100, type=int)
+        days = request.args.get('days', 200, type=int)
         window = request.args.get('window', 20, type=int)
         std_dev = request.args.get('std_dev', 2, type=int)
         
@@ -237,7 +412,7 @@ def analyze_bollinger_only(ticker):
 def analyze_macd_only(ticker):
     """MACD analysis only endpoint."""
     try:
-        days = request.args.get('days', 100, type=int)
+        days = request.args.get('days', 200, type=int)
         fast = request.args.get('fast', 12, type=int)
         slow = request.args.get('slow', 26, type=int)
         signal = request.args.get('signal', 9, type=int)
@@ -264,7 +439,7 @@ def analyze_macd_only(ticker):
 def analyze_rsi_only(ticker):
     """RSI analysis only endpoint."""
     try:
-        days = request.args.get('days', 100, type=int)
+        days = request.args.get('days', 200, type=int)
         window = request.args.get('window', 14, type=int)
         
         analyzer = QuantCodeAnalyzer(ticker.upper(), days=days)
@@ -305,7 +480,7 @@ def batch_analyze():
             }), 400
         
         tickers = data['tickers']
-        days = data.get('days', 100)
+        days = data.get('days', 200)
         
         if not isinstance(tickers, list) or len(tickers) == 0:
             return jsonify({
@@ -447,6 +622,87 @@ def calculate_position_size_endpoint():
             "message": str(e),
             "timestamp": datetime.now().isoformat()
         }), 500
+
+@app.route('/api/history/<ticker>', methods=['GET'])
+def get_history_series(ticker: str):
+    """Provide historical close price series for charts.
+
+    Query params:
+        days: int (default 200) — number of calendar days to fetch.
+
+    Returns: { series: [{ time: 'YYYY-MM-DD', value: float }, ...] }
+    """
+    try:
+        days = request.args.get('days', 200, type=int)
+        if days < 20 or days > 730:
+            return jsonify({
+                'error': 'Invalid days parameter. Must be between 20 and 730.'
+            }), 400
+
+        # Cache key and nocache override
+        key = (ticker.upper(), int(days))
+        nocache = request.args.get('nocache', '0') in ('1', 'true', 'True')
+
+        if not nocache:
+            cached = _cache_get(HistoryCache, HistoryCacheMeta, key, HistoryCacheTTL)
+            if cached is not None:
+                logger.info(f"History cache hit for {ticker}:{days}")
+                return jsonify(cached)
+
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        df = yf.download(
+            ticker,
+            start=start_date,
+            end=end_date,
+            progress=False,
+            auto_adjust=True,
+            prepost=True,
+            group_by='column'
+        )
+        if df.empty:
+            return jsonify({ 'series': [] })
+
+        # Ensure datetime index for consistent formatting
+        try:
+            df.index = pd.to_datetime(df.index)
+        except Exception:
+            pass
+
+        def _to_date_str(idx_val):
+            try:
+                # pandas Timestamp or datetime
+                return idx_val.strftime('%Y-%m-%d')
+            except Exception:
+                s = str(idx_val)
+                # Fallback: try first 10 chars if looks like date
+                return s[:10]
+
+        # Flatten columns if MultiIndex and extract a 1D Close series
+        if isinstance(df.columns, pd.MultiIndex):
+            try:
+                df.columns = df.columns.droplevel(1)
+            except Exception:
+                pass
+
+        close_series = None
+        if 'Close' in df.columns:
+            close_obj = df['Close']
+            # Ensure it's a Series
+            close_series = close_obj.iloc[:, 0] if hasattr(close_obj, 'columns') else close_obj
+        elif 'Adj Close' in df.columns:
+            close_obj = df['Adj Close']
+            close_series = close_obj.iloc[:, 0] if hasattr(close_obj, 'columns') else close_obj
+        else:
+            raise ValueError("Close prices not found in downloaded data")
+
+        series = [{ 'time': _to_date_str(idx), 'value': float(val) } for idx, val in close_series.dropna().items()]
+        payload = { 'series': series, 'ticker': ticker.upper() }
+        _cache_set(HistoryCache, HistoryCacheMeta, key, payload, HistoryCacheMaxKeys)
+        return jsonify(payload)
+    except Exception as e:
+        logger.error(f"History endpoint error for {ticker}: {e}")
+        return jsonify({ 'error': 'Failed to fetch history', 'details': str(e) }), 500
 
 @app.errorhandler(404)
 def not_found(error):
