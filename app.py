@@ -1,14 +1,4 @@
-"""
-Flask API for QuantCode Trading Analysis
-========================================
-
-A RESTful API that provides comprehensive trading analysis using multiple
-technical indicators through the QuantCodeAnalyzer class.
-
-Author: QuantCode Team
-Date: October 2025
-"""
-
+import logging
 from flask import Flask, jsonify, request
 from backend.quantcode_analyzer import QuantCodeAnalyzer
 import logging
@@ -20,19 +10,31 @@ import os
 from dotenv import load_dotenv
 from models import db, Ticker, AnalysisResult, PaperTrade
 from sqlalchemy import func
-def paper_trade_to_dict(trade):
-    return {
-        'id': trade.id,
-        'ticker_symbol': trade.ticker_symbol,
-        'entry_timestamp': trade.entry_timestamp.isoformat() if trade.entry_timestamp else None,
-        'trade_type': trade.trade_type,
-        'entry_price': trade.entry_price,
-        'stop_loss_price': trade.stop_loss_price,
-        'status': trade.status,
-        'exit_price': trade.exit_price,
-        'exit_timestamp': getattr(trade, 'exit_timestamp', None),
-        'target_price': getattr(trade, 'target_price', None)
-    }
+
+# --- Paper Trade Endpoints ---
+## Place all route definitions after app initialization
+
+# ...existing imports and config...
+
+from flask_migrate import Migrate
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load environment variables (from .env if present)
+load_dotenv()
+
+# Initialize Flask app
+app = Flask(__name__)
+
+# --------------------
+# Database configuration
+# --------------------
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+
 
 # --- Paper Trade Endpoints ---
 @app.route('/api/trades', methods=['POST'])
@@ -138,6 +140,68 @@ def close_trade(trade_id):
     else:
         result['target_price'] = round(trade.entry_price - 2 * risk, 4)
     return jsonify(result)
+## All route definitions moved below app initialization
+"""
+Flask API for QuantCode Trading Analysis
+========================================
+
+A RESTful API that provides comprehensive trading analysis using multiple
+technical indicators through the QuantCodeAnalyzer class.
+
+Author: QuantCode Team
+Date: October 2025
+"""
+
+def paper_trade_to_dict(trade):
+    return {
+        'id': trade.id,
+        'ticker_symbol': trade.ticker_symbol,
+        'entry_timestamp': trade.entry_timestamp.isoformat() if trade.entry_timestamp else None,
+        'trade_type': trade.trade_type,
+        'entry_price': trade.entry_price,
+        'stop_loss_price': trade.stop_loss_price,
+        'status': trade.status,
+        'exit_price': trade.exit_price,
+        'exit_timestamp': getattr(trade, 'exit_timestamp', None),
+        'target_price': getattr(trade, 'target_price', None)
+    }
+
+    # --- Paper Trade Endpoints ---
+    # Route definitions must come after app is initialized
+    ticker_symbol = data.get('ticker_symbol')
+    trade_type = data.get('trade_type')
+    entry_price = data.get('entry_price')
+    stop_loss_price = data.get('stop_loss_price')
+    if not all([ticker_symbol, trade_type, entry_price, stop_loss_price]):
+        return jsonify({'error': 'Missing required fields'}), 400
+    if trade_type not in ('LONG', 'SHORT'):
+        return jsonify({'error': 'trade_type must be LONG or SHORT'}), 400
+    try:
+        entry_price = float(entry_price)
+        stop_loss_price = float(stop_loss_price)
+    except Exception:
+        return jsonify({'error': 'entry_price and stop_loss_price must be numbers'}), 400
+    # Calculate target price (1:2 risk-reward)
+    risk = abs(entry_price - stop_loss_price)
+    if trade_type == 'LONG':
+        target_price = entry_price + 2 * risk
+    else:
+        target_price = entry_price - 2 * risk
+    trade = PaperTrade(
+        ticker_symbol=ticker_symbol.upper(),
+        trade_type=trade_type,
+        entry_price=entry_price,
+        stop_loss_price=stop_loss_price,
+        status='OPEN'
+    )
+    db.session.add(trade)
+    db.session.commit()
+    # Attach target_price for response (not persisted)
+    result = paper_trade_to_dict(trade)
+    result['target_price'] = round(target_price, 4)
+    return jsonify(result), 201
+
+## Move all route definitions below app initialization
 from flask_migrate import Migrate
 
 # Configure logging
@@ -155,10 +219,6 @@ app = Flask(__name__)
 # --------------------
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-# Initialize database with app
-db.init_app(app)
-Migrate(app, db)
 
 # Auto-initialize schema if using SQLite and DATABASE_URL points to sqlite
 try:
@@ -185,11 +245,38 @@ AnalyzeCacheMeta: Dict[Tuple[str, int], float] = {}
 AnalyzeCacheTTL = 180  # seconds
 AnalyzeCacheMaxKeys = 200
 
-HistoryCache: Dict[Tuple[str, int], Dict[str, Any]] = {}
-HistoryCacheMeta: Dict[Tuple[str, int], float] = {}
-HistoryCacheTTL = 600  # seconds
-HistoryCacheMaxKeys = 300
 
+
+# --- Dashboard Endpoint ---
+@app.route('/api/dashboard', methods=['GET'])
+def dashboard():
+    """
+    Analyze all watched tickers and return a consolidated summary.
+    Response: List of { symbol, final_signal }
+    """
+    try:
+        # Get all watched tickers
+        rows = Ticker.query.all() if hasattr(Ticker, 'query') else db.session.query(Ticker).all()
+        symbols = []
+        for r in rows:
+            sym = getattr(r, 'symbol', None) or getattr(r, 'ticker', None)
+            if sym is None:
+                sym = str(r)
+            symbols.append(str(sym))
+        summary = []
+        for symbol in symbols:
+            try:
+                analyzer = QuantCodeAnalyzer(symbol)
+                result = analyzer.get_final_signal()
+                final_signal = result.get('final_signal', 'Error')
+                summary.append({ 'symbol': symbol, 'final_signal': final_signal })
+            except Exception as e:
+                summary.append({ 'symbol': symbol, 'final_signal': 'Error', 'error': str(e) })
+        return jsonify(summary)
+    except Exception as e:
+        return jsonify({ 'error': 'Dashboard analysis failed', 'details': str(e) }), 500
+
+# Auto-initialize schema if using SQLite and DATABASE_URL points to sqlite
 def _cache_get(cache: Dict, meta: Dict, key: Tuple, ttl: int):
     now = datetime.now().timestamp()
     ts = meta.get(key)
@@ -412,14 +499,14 @@ def analyze_ticker(ticker):
     try:
         # Get optional parameters
         days = request.args.get('days', 200, type=int)
-        
+
         # Validate days parameter
         if days < 20 or days > 365:
             return jsonify({
                 "error": "Invalid days parameter. Must be between 20 and 365.",
                 "ticker": ticker
             }), 400
-        
+
         # Cache key and nocache override
         key = (ticker.upper(), int(days))
         nocache = request.args.get('nocache', '0') in ('1', 'true', 'True')
@@ -430,13 +517,13 @@ def analyze_ticker(ticker):
                 logger.info(f"Analyze cache hit for {ticker}:{days}")
                 return jsonify(cached)
 
-    # Read risk parameters from query
-    capital = request.args.get('capital', 5000, type=float)
-    risk_percent = request.args.get('risk', 1, type=float)
-    rr_ratio = request.args.get('rrRatio', 3, type=float)
-    # Initialize analyzer and get results
-    analyzer = QuantCodeAnalyzer(ticker.upper(), days=days)
-    result = analyzer.get_final_signal(capital=capital, risk_percent=risk_percent, rr_ratio=rr_ratio)
+        # Read risk parameters from query
+        capital = request.args.get('capital', 5000, type=float)
+        risk_percent = request.args.get('risk', 1, type=float)
+        rr_ratio = request.args.get('rrRatio', 3, type=float)
+        # Initialize analyzer and get results
+        analyzer = QuantCodeAnalyzer(ticker.upper(), days=days)
+        result = analyzer.get_final_signal(capital=capital, risk_percent=risk_percent, rr_ratio=rr_ratio)
 
         # Persist analysis result if successful (no error key)
         try:
