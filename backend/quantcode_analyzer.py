@@ -302,15 +302,55 @@ class QuantCodeAnalyzer:
             
 			return {
 				"signal": signal,
-				"score": score,
-				"details": details,
-				"position_percent": round(position_pct, 2),
-				"band_values": {
-					"upper": float(latest_upper),
-					"middle": float(latest_sma),
-					"lower": float(latest_lower),
-					"current_price": float(latest_close)
-				}
+					final_signal = None
+					confidence = None
+					total_score = 0
+					chart_data = {}
+					suggested_stop_loss = None
+					trade_setup = None
+					# --- Trade Setup ---
+					if final_signal in ('BUY', 'SELL') and self.latest_close_price is not None and suggested_stop_loss is not None:
+						entry_price = float(self.latest_close_price)
+						stop_loss_price = float(suggested_stop_loss)
+						risk_per_share = abs(entry_price - stop_loss_price)
+						if risk_per_share == 0:
+							position_size = 0
+						else:
+							position_size = int((capital * (risk_percent / 100)) / risk_per_share)
+						if final_signal == 'BUY':
+							target_price = entry_price + (risk_per_share * rr_ratio)
+						else:
+							target_price = entry_price - (risk_per_share * rr_ratio)
+						trade_setup = {
+							"entry_price": entry_price,
+							"stop_loss_price": stop_loss_price,
+							"risk_per_share": round(risk_per_share, 4),
+							"target_price": round(target_price, 4),
+							"position_size": position_size,
+							"capital": capital,
+							"risk_percent": risk_percent,
+							"rr_ratio": rr_ratio
+						}
+					return {
+						"ticker": self.ticker,
+						"final_signal": final_signal,
+						"confidence": confidence,
+						"latest_close_price": self.latest_close_price,
+						"primary_trend": primary_trend,
+						"total_score": total_score,
+						"chart_data": chart_data,
+						"suggested_stop_loss": suggested_stop_loss,
+						"trade_setup": trade_setup,
+						"analyses": {
+							"candlestick_patterns": candle_patterns,
+							"chart_patterns": chart_patterns,
+							"heiken_ashi": heiken_ashi_result,
+							"bollinger_bands": bollinger_result,
+							"macd": macd_result,
+							"divergence": divergence_result,
+							"rsi": rsi_result
+						}
+					}
 			}
             
 		except Exception as e:
@@ -733,6 +773,22 @@ class QuantCodeAnalyzer:
 				'rsi14': self._series_to_chart(self.rsi14) if self.rsi14 is not None else [],
 			}
 
+			# --- Suggested Stop Loss ---
+			suggested_stop_loss = None
+			if final_signal == 'BUY':
+				# Use Low of most recent candle
+				try:
+					suggested_stop_loss = float(self.data['Low'].iloc[-1])
+				except Exception:
+					suggested_stop_loss = None
+			elif final_signal == 'SELL':
+				try:
+					suggested_stop_loss = float(self.data['High'].iloc[-1])
+				except Exception:
+					suggested_stop_loss = None
+			else:
+				suggested_stop_loss = None
+
 			return {
 				"ticker": self.ticker,
 				"final_signal": final_signal,
@@ -741,6 +797,7 @@ class QuantCodeAnalyzer:
 				"primary_trend": primary_trend,
 				"total_score": total_score,
 				"chart_data": chart_data,
+				"suggested_stop_loss": suggested_stop_loss,
 				"analyses": {
 					"candlestick_patterns": candle_patterns,
 					"chart_patterns": chart_patterns,

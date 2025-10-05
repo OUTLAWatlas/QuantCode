@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import TradeSetupCard from './TradeSetupCard';
+import axios from 'axios';
 import { Card, CardHeader, CardContent, Typography, Chip, Divider, Box, Button } from '@mui/material';
 import { TrendingUp, TrendingDown, PauseCircleOutline } from '@mui/icons-material';
 
@@ -15,6 +17,10 @@ const prettyName = (key) => key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toU
 const AnalysisView = ({ analysisData }) => {
   // Toggle for showing/hiding the detailed breakdown
   const [showBreakdown, setShowBreakdown] = useState(true);
+  // Log trade state
+  const [logSuccess, setLogSuccess] = useState(false);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logError, setLogError] = useState('');
 
   if (!analysisData) return null;
   const final = (analysisData.final_signal || '').toUpperCase();
@@ -25,6 +31,25 @@ const AnalysisView = ({ analysisData }) => {
   const scoreText = score > 0 ? `+${score}` : `${score}`;
 
   const entries = Object.entries(analysisData?.analyses || {});
+
+  const canLogTrade = final === 'BUY' || final === 'SELL';
+
+  const handleLogTrade = async () => {
+    setLogLoading(true);
+    setLogError('');
+    try {
+      await axios.post('/api/trades', {
+        ticker_symbol: analysisData.ticker,
+        trade_type: final === 'BUY' ? 'LONG' : 'SHORT',
+        entry_price: analysisData.latest_close_price,
+        stop_loss_price: analysisData.suggested_stop_loss
+      });
+      setLogSuccess(true);
+    } catch (err) {
+      setLogError(err?.response?.data?.error || 'Failed to log trade.');
+    }
+    setLogLoading(false);
+  };
 
   return (
     <Card className="panel panel-frosted">
@@ -48,7 +73,33 @@ const AnalysisView = ({ analysisData }) => {
           <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>{analysisData.confidence}</Typography>
         </div>
 
-        {/* Primary Trend & Confluence Score */}
+        {/* Trade Setup Card (only for actionable signals) */}
+        {analysisData.trade_setup && (
+          <TradeSetupCard setup={analysisData.trade_setup} />
+        )}
+
+        {/* Log Paper Trade Button */}
+        {canLogTrade && (
+          <Box sx={{ mt: 2, mb: 1 }}>
+            <Button
+              variant="contained"
+              color="success"
+              disabled={logSuccess || logLoading}
+              onClick={handleLogTrade}
+              sx={{ fontWeight: 'bold', boxShadow: '0 0 8px #39FF14', background: '#181A20', color: '#39FF14', border: '1px solid #39FF14' }}
+            >
+              {logSuccess ? 'Trade Logged!' : logLoading ? 'Logging...' : 'Log Paper Trade'}
+            </Button>
+            {logError && (
+              <Typography sx={{ color: '#FF073A', mt: 1 }}>{logError}</Typography>
+            )}
+            {logSuccess && (
+              <Typography sx={{ color: '#39FF14', mt: 1 }}>Trade logged successfully!</Typography>
+            )}
+          </Box>
+        )}
+
+        {/* Primary Trend, Confluence Score, Suggested SL */}
         <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap', mb: 2, mt: 1 }}>
           <Typography variant="subtitle1" className="title-orbitron">
             Primary Trend: <span className="mono">{analysisData?.primary_trend?.trend || '—'}</span>
@@ -56,6 +107,11 @@ const AnalysisView = ({ analysisData }) => {
           <Typography variant="subtitle1" className="title-orbitron">
             Confluence Score: <span className={`mono ${scoreClass}`}>{scoreText}</span>
           </Typography>
+          {canLogTrade && analysisData.suggested_stop_loss != null && (
+            <Typography variant="subtitle1" className="title-orbitron" sx={{ color: final === 'BUY' ? '#39FF14' : '#FF073A', fontWeight: 'bold' }}>
+              Suggested SL: <span className="mono">₹{Number(analysisData.suggested_stop_loss).toFixed(2)}</span>
+            </Typography>
+          )}
           <Button size="small" variant="outlined" className="btn-glow" onClick={() => setShowBreakdown(v => !v)}>
             {showBreakdown ? 'Hide Breakdown' : 'Show Breakdown'}
           </Button>

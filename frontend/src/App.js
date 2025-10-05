@@ -8,6 +8,7 @@ import RiskCalculator from './components/RiskCalculator';
 import AnalysisView from './components/AnalysisView';
 import SkeletonLoader from './components/SkeletonLoader';
 import TickerManager from './components/TickerManager';
+import JournalView from './components/JournalView';
 import { Dialog, DialogTitle, DialogContent, DialogActions, Button } from '@mui/material';
 import './styles/singularity.css';
 
@@ -22,6 +23,7 @@ import './styles/singularity.css';
  * Date: October 2025
  */
 
+
 const App = () => {
   // Core state
   const [selectedTicker, setSelectedTicker] = useState('RELIANCE.NS');
@@ -30,13 +32,16 @@ const App = () => {
   // Focus mode
   const [isFocusMode, setIsFocusMode] = useState(false);
   const toggleFocusMode = () => setIsFocusMode(v => !v);
-  
+
   // Dashboard summaries and chart series
   const [TICKERS, setTICKERS] = useState(['RELIANCE.NS', 'INFY.NS', 'TCS.NS', 'HDFCBANK.NS', 'ICICIBANK.NS']);
   const [summaries, setSummaries] = useState({});
   const [chartSeries, setChartSeries] = useState([]);
   const [chartData, setChartData] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Journal view state
+  const [activeView, setActiveView] = useState('dashboard'); // 'dashboard' or 'journal'
 
   // API base URL - adjust this based on your Flask backend setup
   const API_BASE_URL = 'http://127.0.0.1:5000';
@@ -137,38 +142,54 @@ const App = () => {
     setSettingsOpen(false);
   };
 
+  // --- Navigation ---
+  const handleNav = (view) => setActiveView(view);
+
   return (
-  <div className={`app app-bg ${isFocusMode ? 'focus-mode-active' : ''}`}>
+    <div className={`app app-bg ${isFocusMode ? 'focus-mode-active' : ''}`}>
       <div className="data-streams" aria-hidden>
         <div className="stream" /><div className="stream" /><div className="stream" /><div className="stream" />
       </div>
-      <Header focusMode={isFocusMode} onToggleFocus={toggleFocusMode} />
+      {/* Header with Journal button */}
+      <Header focusMode={isFocusMode} onToggleFocus={toggleFocusMode}>
+        <Button
+          variant={activeView === 'dashboard' ? 'outlined' : 'contained'}
+          sx={{ ml: 2, background: activeView === 'journal' ? '#39FF14' : undefined, color: activeView === 'journal' ? '#181A20' : undefined, fontWeight: 'bold' }}
+          onClick={() => handleNav(activeView === 'journal' ? 'dashboard' : 'journal')}
+        >
+          {activeView === 'journal' ? 'Back to Dashboard' : 'Journal'}
+        </Button>
+      </Header>
 
       <Container maxWidth="xl" sx={{ mt: 3, mb: 6 }}>
-        <div className={`main-grid ${isFocusMode ? 'focus-mode' : ''}`}>
-          <Grid container spacing={3}>
-            <Grid item xs={12} md={3} className="dashboard-panel">
-            <Dashboard tickers={TICKERS} summaries={summaries} loading={loading} selected={selectedTicker} onSelect={setSelectedTicker} />
-            <Button variant="outlined" size="small" sx={{ mt: 2 }} className="btn-glow" onClick={() => setSettingsOpen(true)}>
-              Manage Tickers
-            </Button>
-            </Grid>
-            <Grid item xs={12} md={6} className="chart-view-panel">
+        {activeView === 'dashboard' ? (
+          <div className={`main-grid ${isFocusMode ? 'focus-mode' : ''}`}>
             <Grid container spacing={3}>
-              <Grid item xs={12}>
-                <ChartView ticker={selectedTicker} chartData={chartData || { close: chartSeries }} />
+              <Grid item xs={12} md={3} className="dashboard-panel">
+                <Dashboard tickers={TICKERS} summaries={summaries} loading={loading} selected={selectedTicker} onSelect={setSelectedTicker} />
+                <Button variant="outlined" size="small" sx={{ mt: 2 }} className="btn-glow" onClick={() => setSettingsOpen(true)}>
+                  Manage Tickers
+                </Button>
               </Grid>
-              <Grid item xs={12}>
-                {loading && <SkeletonLoader />}
-                {!loading && results && <AnalysisView analysisData={results} />}
+              <Grid item xs={12} md={6} className="chart-view-panel">
+                <Grid container spacing={3}>
+                  <Grid item xs={12}>
+                    <ChartView ticker={selectedTicker} chartData={chartData || { close: chartSeries }} />
+                  </Grid>
+                  <Grid item xs={12}>
+                    {loading && <SkeletonLoader />}
+                    {!loading && results && <AnalysisView analysisData={results} />}
+                  </Grid>
+                </Grid>
+              </Grid>
+              <Grid item xs={12} md={3} className="risk-calculator-panel">
+                <RiskCalculator apiBase={API_BASE_URL} />
               </Grid>
             </Grid>
-            </Grid>
-            <Grid item xs={12} md={3} className="risk-calculator-panel">
-            <RiskCalculator apiBase={API_BASE_URL} />
-            </Grid>
-          </Grid>
-        </div>
+          </div>
+        ) : (
+          <JournalView />
+        )}
       </Container>
 
       <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} fullWidth maxWidth="sm">

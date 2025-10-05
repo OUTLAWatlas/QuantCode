@@ -18,7 +18,126 @@ import pandas as pd
 from typing import Any, Dict, Tuple
 import os
 from dotenv import load_dotenv
-from models import db, Ticker, AnalysisResult
+from models import db, Ticker, AnalysisResult, PaperTrade
+from sqlalchemy import func
+def paper_trade_to_dict(trade):
+    return {
+        'id': trade.id,
+        'ticker_symbol': trade.ticker_symbol,
+        'entry_timestamp': trade.entry_timestamp.isoformat() if trade.entry_timestamp else None,
+        'trade_type': trade.trade_type,
+        'entry_price': trade.entry_price,
+        'stop_loss_price': trade.stop_loss_price,
+        'status': trade.status,
+        'exit_price': trade.exit_price,
+        'exit_timestamp': getattr(trade, 'exit_timestamp', None),
+        'target_price': getattr(trade, 'target_price', None)
+    }
+
+# --- Paper Trade Endpoints ---
+@app.route('/api/trades', methods=['POST'])
+def log_trade():
+    """
+    Log a new paper trade.
+    Request JSON: {
+        "ticker_symbol": str,
+        "trade_type": "LONG" or "SHORT",
+        "entry_price": float,
+        "stop_loss_price": float
+    }
+    Response: Trade object as JSON, status 201
+    """
+    data = request.get_json(silent=True) or {}
+    ticker_symbol = data.get('ticker_symbol')
+    trade_type = data.get('trade_type')
+    entry_price = data.get('entry_price')
+    stop_loss_price = data.get('stop_loss_price')
+    if not all([ticker_symbol, trade_type, entry_price, stop_loss_price]):
+        return jsonify({'error': 'Missing required fields'}), 400
+    if trade_type not in ('LONG', 'SHORT'):
+        return jsonify({'error': 'trade_type must be LONG or SHORT'}), 400
+    try:
+        entry_price = float(entry_price)
+        stop_loss_price = float(stop_loss_price)
+    except Exception:
+        return jsonify({'error': 'entry_price and stop_loss_price must be numbers'}), 400
+    # Calculate target price (1:2 risk-reward)
+    risk = abs(entry_price - stop_loss_price)
+    if trade_type == 'LONG':
+        target_price = entry_price + 2 * risk
+    else:
+        target_price = entry_price - 2 * risk
+    trade = PaperTrade(
+        ticker_symbol=ticker_symbol.upper(),
+        trade_type=trade_type,
+        entry_price=entry_price,
+        stop_loss_price=stop_loss_price,
+        status='OPEN'
+    )
+    db.session.add(trade)
+    db.session.commit()
+    # Attach target_price for response (not persisted)
+    result = paper_trade_to_dict(trade)
+    result['target_price'] = round(target_price, 4)
+    return jsonify(result), 201
+
+@app.route('/api/trades', methods=['GET'])
+def view_trades():
+    """
+    View paper trades. Optional query param: status (OPEN/CLOSED)
+    Response: List of trade objects, most recent first
+    """
+    status = request.args.get('status')
+    query = PaperTrade.query
+    if status:
+        query = query.filter(PaperTrade.status == status.upper())
+    trades = query.order_by(PaperTrade.entry_timestamp.desc()).all()
+    # Attach target_price for each trade (not persisted)
+    results = []
+    for t in trades:
+        d = paper_trade_to_dict(t)
+        risk = abs(t.entry_price - t.stop_loss_price)
+        if t.trade_type == 'LONG':
+            d['target_price'] = round(t.entry_price + 2 * risk, 4)
+        else:
+            d['target_price'] = round(t.entry_price - 2 * risk, 4)
+        results.append(d)
+    return jsonify(results)
+
+@app.route('/api/trades/<int:trade_id>', methods=['PUT'])
+def close_trade(trade_id):
+    """
+    Close a paper trade.
+    Request JSON: { "exit_price": float }
+    Response: Updated trade object as JSON
+    """
+    trade = PaperTrade.query.get(trade_id)
+    if not trade:
+        return jsonify({'error': 'Trade not found'}), 404
+    if trade.status == 'CLOSED':
+        return jsonify({'error': 'Trade already closed'}), 400
+    data = request.get_json(silent=True) or {}
+    exit_price = data.get('exit_price')
+    if exit_price is None:
+        return jsonify({'error': 'Missing exit_price'}), 400
+    try:
+        exit_price = float(exit_price)
+    except Exception:
+        return jsonify({'error': 'exit_price must be a number'}), 400
+    trade.status = 'CLOSED'
+    trade.exit_price = exit_price
+    # Add exit_timestamp (not persisted in model, so attach for response)
+    exit_ts = datetime.now()
+    db.session.commit()
+    result = paper_trade_to_dict(trade)
+    result['exit_timestamp'] = exit_ts.isoformat()
+    # Attach target_price for response
+    risk = abs(trade.entry_price - trade.stop_loss_price)
+    if trade.trade_type == 'LONG':
+        result['target_price'] = round(trade.entry_price + 2 * risk, 4)
+    else:
+        result['target_price'] = round(trade.entry_price - 2 * risk, 4)
+    return jsonify(result)
 from flask_migrate import Migrate
 
 # Configure logging
@@ -311,9 +430,13 @@ def analyze_ticker(ticker):
                 logger.info(f"Analyze cache hit for {ticker}:{days}")
                 return jsonify(cached)
 
-        # Initialize analyzer and get results
-        analyzer = QuantCodeAnalyzer(ticker.upper(), days=days)
-        result = analyzer.get_final_signal()
+    # Read risk parameters from query
+    capital = request.args.get('capital', 5000, type=float)
+    risk_percent = request.args.get('risk', 1, type=float)
+    rr_ratio = request.args.get('rrRatio', 3, type=float)
+    # Initialize analyzer and get results
+    analyzer = QuantCodeAnalyzer(ticker.upper(), days=days)
+    result = analyzer.get_final_signal(capital=capital, risk_percent=risk_percent, rr_ratio=rr_ratio)
 
         # Persist analysis result if successful (no error key)
         try:
