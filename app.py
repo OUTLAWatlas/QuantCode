@@ -1,5 +1,6 @@
 import logging
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 from backend.quantcode_analyzer import QuantCodeAnalyzer
 import logging
 from datetime import datetime, timedelta
@@ -27,6 +28,9 @@ load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
+
+# Enable CORS for all routes
+CORS(app)
 
 # --------------------
 # Database configuration
@@ -211,8 +215,7 @@ logger = logging.getLogger(__name__)
 # Load environment variables (from .env if present)
 load_dotenv()
 
-# Initialize Flask app
-app = Flask(__name__)
+
 
 # --------------------
 # Database configuration
