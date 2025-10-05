@@ -73,19 +73,19 @@ def _save_state(state: Dict[str, Dict[str, str]]) -> None:
 def send_email_notification(subject: str, body: str, *, to_addresses: Optional[List[str]] = None) -> bool:
     """Send an email using Gmail SMTP.
 
-    Environment:
-      - QUANTCODE_EMAIL_FROM
-      - QUANTCODE_EMAIL_PASSWORD
-      - QUANTCODE_EMAIL_TO (optional)
+        Environment:
+            - EMAIL_ADDRESS
+            - EMAIL_PASSWORD
+            - QUANTCODE_EMAIL_TO (optional)
 
     Returns True on success, False on failure.
     """
-    from_addr = os.getenv("QUANTCODE_EMAIL_FROM")
-    password = os.getenv("QUANTCODE_EMAIL_PASSWORD")
+    from_addr = os.environ.get("EMAIL_ADDRESS")
+    password = os.environ.get("EMAIL_PASSWORD")
     env_to = os.getenv("QUANTCODE_EMAIL_TO")
 
     if not from_addr or not password:
-        logger.warning("Email not sent: QUANTCODE_EMAIL_FROM or QUANTCODE_EMAIL_PASSWORD is not set")
+        logger.warning("Email not sent: EMAIL_ADDRESS or EMAIL_PASSWORD is not set")
         return False
 
     if to_addresses is None:

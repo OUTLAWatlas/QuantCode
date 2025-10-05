@@ -17,6 +17,7 @@ import yfinance as yf
 import pandas as pd
 from typing import Any, Dict, Tuple
 import os
+from dotenv import load_dotenv
 from models import db, Ticker, AnalysisResult
 from flask_migrate import Migrate
 
@@ -24,24 +25,26 @@ from flask_migrate import Migrate
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Load environment variables (from .env if present)
+load_dotenv()
+
 # Initialize Flask app
 app = Flask(__name__)
 
 # --------------------
 # Database configuration
 # --------------------
-default_sqlite_uri = 'sqlite:///quantcode.db'
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', default_sqlite_uri)
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize database with app
 db.init_app(app)
 Migrate(app, db)
 
-# Auto-initialize SQLite schema for local development when using the fallback DB
+# Auto-initialize schema if using SQLite and DATABASE_URL points to sqlite
 try:
-    uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
-    if uri.startswith('sqlite'):
+    uri = app.config.get('SQLALCHEMY_DATABASE_URI', '') or ''
+    if isinstance(uri, str) and uri.startswith('sqlite'):
         with app.app_context():
             from sqlalchemy import inspect
             insp = inspect(db.engine)
