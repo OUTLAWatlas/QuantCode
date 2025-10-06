@@ -33,6 +33,13 @@ class QuantCodeAnalyzer:
 		Returns:
 			Dict with signal, confidence, suggested stop loss, and trade setup
 		"""
+		# Early exit if a prior error occurred during data fetch
+		if getattr(self, 'error', None):
+			return {
+				"ticker": self.ticker,
+				"final_signal": "Error",
+				"error": self.error
+			}
 		try:
 			if self.data is None:
 				self._fetch_data()
