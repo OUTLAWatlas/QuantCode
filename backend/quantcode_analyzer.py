@@ -12,6 +12,7 @@ Date: October 2025
 
 import pandas as pd
 import numpy as np
+import yfinance as yf
 from alpha_vantage.timeseries import TimeSeries
 from datetime import datetime, timedelta
 from typing import Dict, Union, List, Optional
@@ -173,23 +174,24 @@ class QuantCodeAnalyzer:
 			ticker (str): Stock ticker symbol (e.g., "AAPL", "RELIANCE.NS")
 			days (int): Number of days of historical data to fetch (default: 200)
 		"""
-	self.ticker = ticker
-	self.days = days
-	self.data = None
-	self.latest_close_price = None
+		self.ticker = ticker
+		self.days = days
+		self.data = None
+		self.latest_close_price = None
 		# Track fatal data-fetch/initialization errors
-	self.error = None
-	self.ema20 = None
-	self.ema50 = None
-	self.bb_upper = None
-	self.bb_middle = None
-	self.bb_lower = None
-	self.macd_line = None
-	self.macd_signal = None
-	self.macd_hist = None
-	self.rsi14 = None
+		self.error = None
+		# Indicator series placeholders
+		self.ema20 = None
+		self.ema50 = None
+		self.bb_upper = None
+		self.bb_middle = None
+		self.bb_lower = None
+		self.macd_line = None
+		self.macd_signal = None
+		self.macd_hist = None
+		self.rsi14 = None
 		# Fetch data immediately
-	self._fetch_data()
+		self._fetch_data()
         
 
 	def _fetch_data(self) -> bool:
@@ -201,29 +203,50 @@ class QuantCodeAnalyzer:
 		try:
 			if not self.ticker or not isinstance(self.ticker, str):
 				raise ValueError("Ticker must be a non-empty string")
-			api_key = os.environ.get('ALPHA_VANTAGE_API_KEY')
-			if not api_key:
-				raise ValueError("Alpha Vantage API key not found in environment variables.")
-			ts = TimeSeries(key=api_key, output_format='pandas')
-			# Fetch daily adjusted data
-			data, meta_data = ts.get_daily_adjusted(symbol=self.ticker, outputsize='compact')
-			# Rename columns to match expected format
-			rename_map = {
-				'1. open': 'Open',
-				'2. high': 'High',
-				'3. low': 'Low',
-				'4. close': 'Close',
-				'6. volume': 'Volume'
-			}
-			data = data.rename(columns=rename_map)
-			# Sort by date ascending
-			data = data.sort_index()
-			# Validate data
-			if data.empty:
-				raise ValueError(f"No data found for ticker '{self.ticker}' from Alpha Vantage.")
-			if len(data) < 60:
+
+			# Commodity-style symbols (e.g., NG=F, SI=F) -> use yfinance
+			if '=' in self.ticker:
+				data = yf.download(self.ticker, period="100d", interval="1d", progress=False, auto_adjust=False)
+				if data is None or data.empty:
+					raise ValueError(f"No data found for ticker '{self.ticker}' from yfinance.")
+				# Ensure required columns exist; add Volume if missing
+				for col in ["Open", "High", "Low", "Close"]:
+					if col not in data.columns:
+						raise ValueError(f"Column {col} missing in yfinance data for {self.ticker}")
+				if "Volume" not in data.columns:
+					data["Volume"] = pd.Series(index=data.index, data=np.nan)
+				# Sort ascending
+				data = data.sort_index()
+				# Normalize to expected columns only
+				self.data = data[["Open", "High", "Low", "Close", "Volume"]].copy()
+			else:
+				# Standard equities -> Alpha Vantage
+				api_key = os.environ.get('ALPHA_VANTAGE_API_KEY')
+				if not api_key:
+					raise ValueError("Alpha Vantage API key not found in environment variables.")
+				ts = TimeSeries(key=api_key, output_format='pandas')
+				# Fetch daily adjusted data
+				data, meta_data = ts.get_daily_adjusted(symbol=self.ticker, outputsize='compact')
+				# Rename columns to match expected format
+				rename_map = {
+					'1. open': 'Open',
+					'2. high': 'High',
+					'3. low': 'Low',
+					'4. close': 'Close',
+					'6. volume': 'Volume'
+				}
+				data = data.rename(columns=rename_map)
+				# Keep only expected cols and sort ascending
+				missing = [c for c in ["Open","High","Low","Close","Volume"] if c not in data.columns]
+				if missing:
+					raise ValueError(f"Alpha Vantage missing columns {missing} for {self.ticker}")
+				self.data = data.sort_index()[["Open","High","Low","Close","Volume"]].copy()
+
+			# Validate length and set latest close
+			if self.data.empty:
+				raise ValueError(f"No data found for ticker '{self.ticker}'.")
+			if len(self.data) < 60:
 				raise ValueError(f"Insufficient data for ticker '{self.ticker}'. Need at least 60 days.")
-			self.data = data
 			self.latest_close_price = float(self.data['Close'].iloc[-1])
 			self._compute_indicators()
 			return True

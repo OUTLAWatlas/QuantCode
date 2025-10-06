@@ -920,7 +920,7 @@ def get_history_series(ticker: str):
 
         series = [{ 'time': _to_date_str(idx), 'value': float(val) } for idx, val in close_series.dropna().items()]
         payload = { 'series': series, 'ticker': ticker.upper() }
-        _cache_set(HistoryCache, HistoryCacheMeta, key, payload, HistoryCacheMaxKeys)
+        # Flask-Caching (@cache.cached) handles caching; return payload directly
         return jsonify(payload)
     except Exception as e:
         logger.error(f"History endpoint error for {ticker}: {e}")
