@@ -173,23 +173,23 @@ class QuantCodeAnalyzer:
 			ticker (str): Stock ticker symbol (e.g., "AAPL", "RELIANCE.NS")
 			days (int): Number of days of historical data to fetch (default: 200)
 		"""
-		self.ticker = ticker
-		self.days = days
-		self.data = None
-		self.latest_close_price = None
+	self.ticker = ticker
+	self.days = days
+	self.data = None
+	self.latest_close_price = None
 		# Track fatal data-fetch/initialization errors
-		self.error = None
-		self.ema20 = None
-		self.ema50 = None
-		self.bb_upper = None
-		self.bb_middle = None
-		self.bb_lower = None
-		self.macd_line = None
-		self.macd_signal = None
-		self.macd_hist = None
-		self.rsi14 = None
+	self.error = None
+	self.ema20 = None
+	self.ema50 = None
+	self.bb_upper = None
+	self.bb_middle = None
+	self.bb_lower = None
+	self.macd_line = None
+	self.macd_signal = None
+	self.macd_hist = None
+	self.rsi14 = None
 		# Fetch data immediately
-		self._fetch_data()
+	self._fetch_data()
         
 
 	def _fetch_data(self) -> bool:
