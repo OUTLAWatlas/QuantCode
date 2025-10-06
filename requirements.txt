@@ -1,4 +1,4 @@
-Flask-Caching
+Flask-Caching[redis]
 pandas>=1.5.0
 yfinance>=0.2.0
 numpy>=1.21.0

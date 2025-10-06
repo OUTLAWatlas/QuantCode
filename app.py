@@ -35,7 +35,13 @@ app = Flask(__name__)
 CORS(app)
 
 # --- Caching Configuration ---
-cache = Cache(app, config={'CACHE_TYPE': 'SimpleCache', 'CACHE_DEFAULT_TIMEOUT': 3600})
+# Use Redis cache for production-grade, multi-process safe caching
+cache_config = {
+    'CACHE_TYPE': 'RedisCache',
+    'CACHE_DEFAULT_TIMEOUT': 3600,
+    'CACHE_REDIS_URL': os.environ.get('REDIS_URL', 'redis://localhost:6379/0'),
+}
+cache = Cache(app, config=cache_config)
 
 
 # --------------------
