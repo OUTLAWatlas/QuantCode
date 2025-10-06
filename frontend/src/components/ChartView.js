@@ -18,6 +18,7 @@ const createThemedChart = (lwcModule, container, width, height) =>
 const ChartView = ({ ticker, chartData }) => {
   // Load lightweight-charts dynamically to avoid ESM/CJS interop issues
   const [lwc, setLwc] = useState(null);
+  const lwcSetRef = useRef(false);
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -27,22 +28,22 @@ const ChartView = ({ ticker, chartData }) => {
         const LineStyle = mod.LineStyle || (mod.default && mod.default.LineStyle);
         const LineSeries = mod.LineSeries || (mod.default && mod.default.LineSeries);
         const HistogramSeries = mod.HistogramSeries || (mod.default && mod.default.HistogramSeries);
-        if (mounted && createChart) setLwc({ createChart, LineStyle, LineSeries, HistogramSeries });
+        if (mounted && createChart) { setLwc({ createChart, LineStyle, LineSeries, HistogramSeries }); lwcSetRef.current = true; }
       } catch (e) {
         // eslint-disable-next-line no-console
         console.error('Failed to load lightweight-charts', e);
       }
       // Fallback to window.LightweightCharts if available (e.g., loaded via script tag)
-      if (mounted && typeof window !== 'undefined' && window.LightweightCharts && !lwc) {
+      if (mounted && typeof window !== 'undefined' && window.LightweightCharts && !lwcSetRef.current) {
         const createChart = window.LightweightCharts.createChart;
         const LineStyle = window.LightweightCharts.LineStyle;
         const LineSeries = window.LightweightCharts.LineSeries;
         const HistogramSeries = window.LightweightCharts.HistogramSeries;
-        if (createChart) setLwc({ createChart, LineStyle, LineSeries, HistogramSeries });
+        if (createChart) { setLwc({ createChart, LineStyle, LineSeries, HistogramSeries }); lwcSetRef.current = true; }
       }
     })();
     return () => { mounted = false; };
-  }, [lwc]);
+  }, []);
   // Container refs for panes
   const priceContainerRef = useRef(null);
   const rsiContainerRef = useRef(null);
@@ -88,6 +89,8 @@ const ChartView = ({ ticker, chartData }) => {
     if (!lwc?.createChart) return;
     const container = priceContainerRef.current;
     if (!container) return;
+    // Create once
+    if (priceChartRef.current) return;
   const width = container.clientWidth || 600;
   const priceChart = createThemedChart(lwc, container, width, baseHeight);
     priceChartRef.current = priceChart;
@@ -104,14 +107,10 @@ const ChartView = ({ ticker, chartData }) => {
     }
     // Overlays
     if (lwc.LineSeries) {
-      ema20Ref.current = priceChart.addSeries(lwc.LineSeries, { color: '#FFD700', lineWidth: 2, lastValueVisible: true, priceLineVisible: false });
-      ema50Ref.current = priceChart.addSeries(lwc.LineSeries, { color: '#FF8C00', lineWidth: 2, lastValueVisible: true, priceLineVisible: false });
       bbUpperRef.current = priceChart.addSeries(lwc.LineSeries, { color: 'rgba(173,216,230,0.8)', lineWidth: 1, lastValueVisible: true, priceLineVisible: false });
       bbMiddleRef.current = priceChart.addSeries(lwc.LineSeries, { color: 'rgba(255,255,255,0.6)', lineWidth: 1, lineStyle: 1, lastValueVisible: true, priceLineVisible: false });
       bbLowerRef.current = priceChart.addSeries(lwc.LineSeries, { color: 'rgba(173,216,230,0.8)', lineWidth: 1, lastValueVisible: true, priceLineVisible: false });
     } else {
-      ema20Ref.current = priceChart.addLineSeries({ color: '#FFD700', lineWidth: 2, lastValueVisible: true, priceLineVisible: false });
-      ema50Ref.current = priceChart.addLineSeries({ color: '#FF8C00', lineWidth: 2, lastValueVisible: true, priceLineVisible: false });
       bbUpperRef.current = priceChart.addLineSeries({ color: 'rgba(173,216,230,0.8)', lineWidth: 1, lastValueVisible: true, priceLineVisible: false });
       bbMiddleRef.current = priceChart.addLineSeries({ color: 'rgba(255,255,255,0.6)', lineWidth: 1, lineStyle: 1, lastValueVisible: true, priceLineVisible: false });
       bbLowerRef.current = priceChart.addLineSeries({ color: 'rgba(173,216,230,0.8)', lineWidth: 1, lastValueVisible: true, priceLineVisible: false });
@@ -266,8 +265,7 @@ const ChartView = ({ ticker, chartData }) => {
       cd.close.forEach(pt => { priceMapRef.current.set(pt.time, pt.value); });
       try { priceChartRef.current?.timeScale().fitContent(); } catch {}
     }
-    if (ema20Ref.current) ema20Ref.current.setData(showEMA && Array.isArray(cd.ema20) ? cd.ema20 : []);
-    if (ema50Ref.current) ema50Ref.current.setData(showEMA && Array.isArray(cd.ema50) ? cd.ema50 : []);
+  // EMA handled by its own toggle effect
     if (bbUpperRef.current) bbUpperRef.current.setData(showBB && Array.isArray(cd.bollinger_upper) ? cd.bollinger_upper : []);
     if (bbMiddleRef.current) bbMiddleRef.current.setData(showBB && Array.isArray(cd.bollinger_middle) ? cd.bollinger_middle : []);
     if (bbLowerRef.current) bbLowerRef.current.setData(showBB && Array.isArray(cd.bollinger_lower) ? cd.bollinger_lower : []);
@@ -296,6 +294,37 @@ const ChartView = ({ ticker, chartData }) => {
       try { macdChartRef.current?.timeScale().fitContent(); } catch {}
     }
   }, [chartData, showEMA, showBB]);
+
+  // EMA toggle and data handling (create/remove on toggle)
+  useEffect(() => {
+    const priceChart = priceChartRef.current;
+    if (!priceChart) return;
+    const cd = chartData || {};
+    if (showEMA) {
+      // Create series if missing
+      if (!ema20Ref.current) {
+        if (lwc?.LineSeries && priceChart.addSeries) {
+          ema20Ref.current = priceChart.addSeries(lwc.LineSeries, { color: '#FFD700', lineWidth: 2, lastValueVisible: true, priceLineVisible: false });
+        } else if (typeof priceChart.addLineSeries === 'function') {
+          ema20Ref.current = priceChart.addLineSeries({ color: '#FFD700', lineWidth: 2, lastValueVisible: true, priceLineVisible: false });
+        }
+      }
+      if (!ema50Ref.current) {
+        if (lwc?.LineSeries && priceChart.addSeries) {
+          ema50Ref.current = priceChart.addSeries(lwc.LineSeries, { color: '#FF8C00', lineWidth: 2, lastValueVisible: true, priceLineVisible: false });
+        } else if (typeof priceChart.addLineSeries === 'function') {
+          ema50Ref.current = priceChart.addLineSeries({ color: '#FF8C00', lineWidth: 2, lastValueVisible: true, priceLineVisible: false });
+        }
+      }
+      // Set data
+      if (ema20Ref.current) ema20Ref.current.setData(Array.isArray(cd.ema20) ? cd.ema20 : []);
+      if (ema50Ref.current) ema50Ref.current.setData(Array.isArray(cd.ema50) ? cd.ema50 : []);
+    } else {
+      // Remove series if exist
+      if (ema20Ref.current) { try { priceChart.removeSeries(ema20Ref.current); } catch {} ema20Ref.current = null; }
+      if (ema50Ref.current) { try { priceChart.removeSeries(ema50Ref.current); } catch {} ema50Ref.current = null; }
+    }
+  }, [showEMA, chartData, lwc]);
 
   // Synchronize time scales and crosshair between charts
   useEffect(() => {
