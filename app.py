@@ -11,6 +11,8 @@ import os
 from dotenv import load_dotenv
 from models import db, Ticker, AnalysisResult, PaperTrade
 from sqlalchemy import func
+from flask_caching import Cache
+import time
 
 # --- Paper Trade Endpoints ---
 ## Place all route definitions after app initialization
@@ -31,6 +33,9 @@ app = Flask(__name__)
 
 # Enable CORS for all routes
 CORS(app)
+
+# --- Caching Configuration ---
+cache = Cache(app, config={'CACHE_TYPE': 'SimpleCache', 'CACHE_DEFAULT_TIMEOUT': 3600})
 
 
 # --------------------
@@ -488,6 +493,7 @@ def health_check():
     })
 
 @app.route('/analyze/<ticker>')
+@cache.cached()
 def analyze_ticker(ticker):
     """
     Comprehensive analysis endpoint that returns all indicators and final signal.
@@ -718,6 +724,7 @@ def batch_analyze():
                 analyzer = QuantCodeAnalyzer(ticker.upper(), days=days)
                 result = analyzer.get_final_signal()
                 results.append(result)
+                time.sleep(15)  # Respect Alpha Vantage rate limit
             except Exception as e:
                 errors.append({
                     "ticker": ticker,
@@ -842,6 +849,7 @@ def calculate_position_size_endpoint():
         }), 500
 
 @app.route('/api/history/<ticker>', methods=['GET'])
+@cache.cached()
 def get_history_series(ticker: str):
     """Provide historical close price series for charts.
 
@@ -861,11 +869,7 @@ def get_history_series(ticker: str):
         key = (ticker.upper(), int(days))
         nocache = request.args.get('nocache', '0') in ('1', 'true', 'True')
 
-        if not nocache:
-            cached = _cache_get(HistoryCache, HistoryCacheMeta, key, HistoryCacheTTL)
-            if cached is not None:
-                logger.info(f"History cache hit for {ticker}:{days}")
-                return jsonify(cached)
+        # Flask-Caching handles caching automatically
 
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
@@ -938,9 +942,21 @@ def internal_error(error):
         "message": "Please try again later"
     }), 500
 
+def seed_database():
+    """
+    Seed the Ticker table with default stocks if empty.
+    """
+    with app.app_context():
+        if Ticker.query.count() == 0:
+            defaults = ['NG=F', 'SI=F']
+            for symbol in defaults:
+                db.session.add(Ticker(symbol=symbol))
+            db.session.commit()
+
 if __name__ == '__main__':
     # Run the Flask development server
     print("🚀 Starting QuantCode Trading Analysis API...")
     print("📊 Access the API at: http://localhost:5000")
     print("📖 API Documentation: http://localhost:5000")
+    seed_database()
     app.run(debug=True, host='0.0.0.0', port=5000)

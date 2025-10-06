@@ -9,18 +9,151 @@ Author: QuantCode Team
 Date: October 2025
 """
 
+
 import pandas as pd
 import numpy as np
-import yfinance as yf
+from alpha_vantage.timeseries import TimeSeries
 from datetime import datetime, timedelta
 from typing import Dict, Union, List, Optional
 import warnings
+import os
 
 # Suppress pandas warnings
 warnings.filterwarnings('ignore')
 
 
 class QuantCodeAnalyzer:
+	def get_final_signal(self, capital=5000, risk_percent=1, rr_ratio=3) -> Dict[str, Union[str, float, Dict]]:
+		"""
+		Generate the final trading signal and trade setup, including risk management.
+		Args:
+			capital (float): Total capital to risk
+			risk_percent (float): Percent of capital to risk per trade
+			rr_ratio (float): Risk-reward ratio for target
+		Returns:
+			Dict with signal, confidence, suggested stop loss, and trade setup
+		"""
+		try:
+			if self.data is None:
+				self._fetch_data()
+
+			# Run all indicator analyses
+			candle_patterns = self.analyze_candlestick_patterns()
+			chart_patterns = self.analyze_chart_patterns()
+			heiken_ashi_result = self.analyze_heiken_ashi()
+			bollinger_result = self.analyze_bollinger_bands()
+			macd_result = self.analyze_macd()
+			divergence_result = self.analyze_divergence()
+			rsi_result = self.analyze_rsi()
+			primary_trend = self.analyze_primary_trend()
+
+			# Aggregate scores for confluence
+			total_score = sum([
+				candle_patterns.get('score', 0),
+				chart_patterns.get('score', 0),
+				heiken_ashi_result.get('score', 0),
+				bollinger_result.get('score', 0),
+				macd_result.get('score', 0),
+				divergence_result.get('score', 0)
+			])
+
+			# Determine final signal
+			scores = {
+				'BUY': 0,
+				'SELL': 0,
+				'HOLD': 0
+			}
+			for analysis in [candle_patterns, chart_patterns, heiken_ashi_result, bollinger_result, macd_result, divergence_result]:
+				s = analysis.get('signal', 'HOLD')
+				scores[s] += 1
+			if scores['BUY'] > scores['SELL'] and scores['BUY'] > scores['HOLD']:
+				final_signal = 'BUY'
+			elif scores['SELL'] > scores['BUY'] and scores['SELL'] > scores['HOLD']:
+				final_signal = 'SELL'
+			else:
+				final_signal = 'HOLD'
+
+			# Confidence metric
+			confidence = f"BUY:{scores['BUY']} SELL:{scores['SELL']} HOLD:{scores['HOLD']}"
+
+			# Chart data for frontend
+			chart_data = {
+				'close': self._series_to_chart(self.data['Close']) if self.data is not None else [],
+				'ema20': self._series_to_chart(self.ema20) if self.ema20 is not None else [],
+				'ema50': self._series_to_chart(self.ema50) if self.ema50 is not None else [],
+				'bb_upper': self._series_to_chart(self.bb_upper) if self.bb_upper is not None else [],
+				'bb_lower': self._series_to_chart(self.bb_lower) if self.bb_lower is not None else [],
+			}
+
+			# --- Suggested Stop Loss ---
+			suggested_stop_loss = None
+			if final_signal == 'BUY':
+				try:
+					suggested_stop_loss = float(self.data['Low'].iloc[-1])
+				except Exception:
+					suggested_stop_loss = None
+			elif final_signal == 'SELL':
+				try:
+					suggested_stop_loss = float(self.data['High'].iloc[-1])
+				except Exception:
+					suggested_stop_loss = None
+			else:
+				suggested_stop_loss = None
+
+			# --- Trade Setup ---
+			trade_setup = None
+			if final_signal in ('BUY', 'SELL') and self.latest_close_price is not None and suggested_stop_loss is not None:
+				entry_price = float(self.latest_close_price)
+				stop_loss_price = float(suggested_stop_loss)
+				risk_per_share = abs(entry_price - stop_loss_price)
+				if risk_per_share == 0:
+					position_size = 0
+				else:
+					position_size = int((capital * (risk_percent / 100)) / risk_per_share)
+				if final_signal == 'BUY':
+					target_price = entry_price + (risk_per_share * rr_ratio)
+				else:
+					target_price = entry_price - (risk_per_share * rr_ratio)
+				trade_setup = {
+					"entry_price": entry_price,
+					"stop_loss_price": stop_loss_price,
+					"risk_per_share": round(risk_per_share, 4),
+					"target_price": round(target_price, 4),
+					"position_size": position_size,
+					"capital": capital,
+					"risk_percent": risk_percent,
+					"rr_ratio": rr_ratio,
+					"suggested_stop_loss": suggested_stop_loss
+				}
+
+			return {
+				"ticker": self.ticker,
+				"final_signal": final_signal,
+				"confidence": confidence,
+				"latest_close_price": self.latest_close_price,
+				"primary_trend": primary_trend,
+				"total_score": total_score,
+				"chart_data": chart_data,
+				"suggested_stop_loss": suggested_stop_loss,
+				"trade_setup": trade_setup,
+				"analyses": {
+					"candlestick_patterns": candle_patterns,
+					"chart_patterns": chart_patterns,
+					"heiken_ashi": heiken_ashi_result,
+					"bollinger_bands": bollinger_result,
+					"macd": macd_result,
+					"divergence": divergence_result,
+					"rsi": rsi_result
+				}
+			}
+		except Exception as e:
+			return {
+				"ticker": self.ticker,
+				"final_signal": "HOLD",
+				"error": str(e),
+				"analyses": {},
+				"confidence": "Error in analysis"
+			}
 	"""
 	Advanced trading analysis class implementing multiple technical indicators
 	and providing consolidated trading signals suitable for Flask API usage.
@@ -29,74 +162,68 @@ class QuantCodeAnalyzer:
 	def __init__(self, ticker: str, days: int = 200):
 		"""
 		Initialize the analyzer with a ticker symbol and data period.
-        
 		Args:
 			ticker (str): Stock ticker symbol (e.g., "AAPL", "RELIANCE.NS")
-			days (int): Number of days of historical data to fetch (default: 100)
+			days (int): Number of days of historical data to fetch (default: 200)
 		"""
 		self.ticker = ticker
 		self.days = days
 		self.data = None
 		self.latest_close_price = None
-
-		# Indicator series placeholders (populated after data fetch)
-		self.ema20: Optional[pd.Series] = None
-		self.ema50: Optional[pd.Series] = None
-		self.bb_upper: Optional[pd.Series] = None
-		self.bb_middle: Optional[pd.Series] = None
-		self.bb_lower: Optional[pd.Series] = None
-		self.macd_line: Optional[pd.Series] = None
-		self.macd_signal: Optional[pd.Series] = None
-		self.macd_hist: Optional[pd.Series] = None
-		self.rsi14: Optional[pd.Series] = None
+		# Track fatal data-fetch/initialization errors
+		self.error = None
+		self.ema20 = None
+		self.ema50 = None
+		self.bb_upper = None
+		self.bb_middle = None
+		self.bb_lower = None
+		self.macd_line = None
+		self.macd_signal = None
+		self.macd_hist = None
+		self.rsi14 = None
+		# Fetch data immediately
+		self._fetch_data()
         
+
 	def _fetch_data(self) -> bool:
 		"""
-		Fetch historical data for the ticker.
-        
+		Fetch historical data for the ticker using Alpha Vantage.
 		Returns:
 			bool: True if data fetched successfully, False otherwise
 		"""
 		try:
-			# Validate input
 			if not self.ticker or not isinstance(self.ticker, str):
 				raise ValueError("Ticker must be a non-empty string")
-            
-			# Calculate date range
-			end_date = datetime.now()
-			start_date = end_date - timedelta(days=self.days)
-            
-			# Download data
-			self.data = yf.download(
-				self.ticker,
-				start=start_date,
-				end=end_date,
-				progress=False,
-				auto_adjust=True,
-				prepost=True
-			)
-            
-			# Flatten column headers if multi-level
-			if isinstance(self.data.columns, pd.MultiIndex):
-				self.data.columns = self.data.columns.droplevel(1)
-            
+			api_key = os.environ.get('ALPHA_VANTAGE_API_KEY')
+			if not api_key:
+				raise ValueError("Alpha Vantage API key not found in environment variables.")
+			ts = TimeSeries(key=api_key, output_format='pandas')
+			# Fetch daily adjusted data
+			data, meta_data = ts.get_daily_adjusted(symbol=self.ticker, outputsize='compact')
+			# Rename columns to match expected format
+			rename_map = {
+				'1. open': 'Open',
+				'2. high': 'High',
+				'3. low': 'Low',
+				'4. close': 'Close',
+				'6. volume': 'Volume'
+			}
+			data = data.rename(columns=rename_map)
+			# Sort by date ascending
+			data = data.sort_index()
 			# Validate data
-			if self.data.empty:
-				raise ValueError(f"No data found for ticker '{self.ticker}'")
-            
-			if len(self.data) < 60:  # Need minimum data for technical indicators and patterns
+			if data.empty:
+				raise ValueError(f"No data found for ticker '{self.ticker}' from Alpha Vantage.")
+			if len(data) < 60:
 				raise ValueError(f"Insufficient data for ticker '{self.ticker}'. Need at least 60 days.")
-            
-			# Store latest close price
+			self.data = data
 			self.latest_close_price = float(self.data['Close'].iloc[-1])
-
-			# Compute indicator series now that data is available
 			self._compute_indicators()
-            
 			return True
-            
 		except Exception as e:
-			raise Exception(f"Error fetching data for {self.ticker}: {str(e)}")
+			# Do not raise; record the error and return False so callers can handle gracefully
+			self.error = f"Failed to fetch data: {e}"
+			return False
 
 	def _compute_indicators(self) -> None:
 		"""Compute commonly used indicator series and store them as attributes.
@@ -671,184 +798,4 @@ class QuantCodeAnalyzer:
 		except Exception as e:
 			return { 'signal': 'HOLD', 'score': 0, 'details': f'Error in divergence: {e}', 'error': True }
 
-	def get_final_signal(self) -> Dict[str, Union[str, float, Dict]]:
-		"""
-		Perform comprehensive analysis using all indicators and return consolidated signal.
-        
-		Returns:
-			Dict containing ticker, final_signal, and all individual analyses
-		"""
-		try:
-			# Ensure data is fetched
-			if self.data is None:
-				self._fetch_data()
-			# Ensure indicator series are available for charting
-			self._ensure_indicators()
-            
-			# Perform all analyses with scoring
-			primary_trend = self.analyze_primary_trend()
-			candle_patterns = self.analyze_candlestick_patterns()
-			chart_patterns = self.analyze_chart_patterns()
-			heiken_ashi_result = self.analyze_heiken_ashi()
-			bollinger_result = self.analyze_bollinger_bands()
-			macd_result = self.analyze_macd()
-			divergence_result = self.analyze_divergence()
-			rsi_result = self.analyze_rsi()  # informational only
-
-			# Sum confluence score
-			scores = [
-				candle_patterns.get('score', 0),
-				chart_patterns.get('score', 0),
-				heiken_ashi_result.get('score', 0),
-				bollinger_result.get('score', 0),
-				macd_result.get('score', 0),
-				divergence_result.get('score', 0),
-			]
-			total_score = int(np.nansum(scores))
-
-			if total_score >= 3:
-				final_signal = 'BUY'
-			elif total_score <= -3:
-				final_signal = 'SELL'
-			else:
-				final_signal = 'HOLD'
-
-			confidence = f"Confluence score {total_score} ({'bullish' if total_score>0 else 'bearish' if total_score<0 else 'neutral'})"
-
-			# Assemble chart-ready data from stored Series
-			chart_data = {
-				'close': self._series_to_chart(self.data['Close']) if 'Close' in self.data.columns else [],
-				'ema20': self._series_to_chart(self.ema20) if self.ema20 is not None else [],
-				'ema50': self._series_to_chart(self.ema50) if self.ema50 is not None else [],
-				'bollinger_upper': self._series_to_chart(self.bb_upper) if self.bb_upper is not None else [],
-				'bollinger_middle': self._series_to_chart(self.bb_middle) if self.bb_middle is not None else [],
-				'bollinger_lower': self._series_to_chart(self.bb_lower) if self.bb_lower is not None else [],
-				'macd': self._series_to_chart(self.macd_line) if self.macd_line is not None else [],
-				'macd_signal': self._series_to_chart(self.macd_signal) if self.macd_signal is not None else [],
-				'macd_histogram': self._series_to_chart(self.macd_hist) if self.macd_hist is not None else [],
-				'rsi14': self._series_to_chart(self.rsi14) if self.rsi14 is not None else [],
-			}
-
-			# --- Suggested Stop Loss ---
-			suggested_stop_loss = None
-			if final_signal == 'BUY':
-				# Use Low of most recent candle
-				try:
-					suggested_stop_loss = float(self.data['Low'].iloc[-1])
-				except Exception:
-					suggested_stop_loss = None
-			elif final_signal == 'SELL':
-				try:
-					suggested_stop_loss = float(self.data['High'].iloc[-1])
-				except Exception:
-					suggested_stop_loss = None
-			else:
-				suggested_stop_loss = None
-
-			# --- Trade Setup ---
-			trade_setup = None
-			if final_signal in ('BUY', 'SELL') and self.latest_close_price is not None and suggested_stop_loss is not None:
-				entry_price = float(self.latest_close_price)
-				stop_loss_price = float(suggested_stop_loss)
-				risk_per_share = abs(entry_price - stop_loss_price)
-				if risk_per_share == 0:
-					position_size = 0
-				else:
-					position_size = int((capital * (risk_percent / 100)) / risk_per_share)
-				if final_signal == 'BUY':
-					target_price = entry_price + (risk_per_share * rr_ratio)
-				else:
-					target_price = entry_price - (risk_per_share * rr_ratio)
-				trade_setup = {
-					"entry_price": entry_price,
-					"stop_loss_price": stop_loss_price,
-					"risk_per_share": round(risk_per_share, 4),
-					"target_price": round(target_price, 4),
-					"position_size": position_size,
-					"capital": capital,
-					"risk_percent": risk_percent,
-					"rr_ratio": rr_ratio
-				}
-
-			return {
-				"ticker": self.ticker,
-				"final_signal": final_signal,
-				"confidence": confidence,
-				"latest_close_price": self.latest_close_price,
-				"primary_trend": primary_trend,
-				"total_score": total_score,
-				"chart_data": chart_data,
-				"suggested_stop_loss": suggested_stop_loss,
-				"trade_setup": trade_setup,
-				"analyses": {
-					"candlestick_patterns": candle_patterns,
-					"chart_patterns": chart_patterns,
-					"heiken_ashi": heiken_ashi_result,
-					"bollinger_bands": bollinger_result,
-					"macd": macd_result,
-					"divergence": divergence_result,
-					"rsi": rsi_result
-				}
-			}
-            
-		except Exception as e:
-			return {
-				"ticker": self.ticker,
-				"final_signal": "HOLD",
-				"error": str(e),
-				"analyses": {},
-				"confidence": "Error in analysis"
-			}
-
-
-# Standalone function for backward compatibility
-def analyze_heiken_ashi(ticker: str) -> Dict[str, Union[str, float]]:
-	"""
-	Backward compatible function for Heiken Ashi analysis only.
-    
-	Args:
-		ticker (str): Stock ticker symbol
-        
-	Returns:
-		Dict containing basic Heiken Ashi analysis results
-	"""
-	try:
-		analyzer = QuantCodeAnalyzer(ticker)
-		ha_result = analyzer.analyze_heiken_ashi()
-        
-		return {
-			"ticker": ticker,
-			"signal": ha_result["signal"],
-			"strategy": "Heiken Ashi Decisive Candle",
-			"latest_close_price": analyzer.latest_close_price
-		}
-        
-	except Exception as e:
-		raise Exception(f"Error analyzing ticker {ticker}: {str(e)}")
-
-
-if __name__ == "__main__":
-	# Example usage and testing
-	test_tickers = ["AAPL", "RELIANCE.NS", "TSLA"]
-    
-	print("QUANTCODE Trading Analysis - Multi-Indicator")
-	print("=" * 60)
-    
-	for ticker in test_tickers:
-		try:
-			analyzer = QuantCodeAnalyzer(ticker)
-			result = analyzer.get_final_signal()
-            
-			print(f"\n📊 Analysis for {result['ticker']}:")
-			print(f"💰 Latest Price: ${result['latest_close_price']:.2f}")
-			print(f"🎯 Final Signal: {result['final_signal']}")
-			print(f"📈 Confidence: {result['confidence']}")
-            
-			print("\n📋 Individual Indicators:")
-			for indicator, analysis in result['analyses'].items():
-				signal_emoji = "📈" if analysis['signal'] == 'BUY' else "📉" if analysis['signal'] == 'SELL' else "⏸️"
-				print(f"   {signal_emoji} {indicator.replace('_', ' ').title()}: {analysis['signal']} - {analysis['details']}")
-                
-		except Exception as e:
-			print(f"\nError analyzing {ticker}: {e}")
 
